@@ -18,7 +18,12 @@ import zipfile
 PLATFORMS = {
     'linux-x86_64': {
         'ext': 'tar.gz',
-        'wheel_tag': 'manylinux_2_39_x86_64',
+        'wheel_tag': 'manylinux_2_34_x86_64',
+        'exe_suffix': '',
+    },
+    'linux-aarch64': {
+        'ext': 'tar.gz',
+        'wheel_tag': 'manylinux_2_34_aarch64',
         'exe_suffix': '',
     },
     'darwin-arm64': {
