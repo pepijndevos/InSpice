@@ -175,10 +175,11 @@ class CadnipSimulation(Simulation):
     def dc(self, **kwargs):
         """DC transfer analysis, restricted to a temperature sweep.
 
-        Cadnip sweeps parameters, not device instances: ``CircuitSweep`` binds
-        netlist `.param` names and rejects instance parameters, so the source,
-        current and resistance sweeps of `.dc` have no equivalent.  The
-        temperature sweep maps onto ``with_temp``.
+        Cadnip sweeps parameters, not devices: ``CircuitSweep`` binds netlist
+        `.param` names and subcircuit instance parameters, but a raw device line
+        never consults the override lens, so the source, current and resistance
+        sweeps of `.dc` have no equivalent.  The temperature sweep maps onto
+        ``with_temp``.
 
         """
         for variable in kwargs:
@@ -187,12 +188,12 @@ class CadnipSimulation(Simulation):
             if variable.lower() != 'temp':
                 raise NotImplementedError(
                     f'Cadnip cannot sweep {variable}: a .dc sweep of a voltage source, a '
-                    'current source or a resistor needs a device instance parameter '
-                    'override, which Cadnip rejects by design ("device instance '
-                    'parameters are not reachable this way"). Only .dc temp is '
-                    'supported, through with_temp. Cadnip would need instance-parameter '
-                    'overrides, or InSpice would have to rewrite the swept device to '
-                    'read a .param.'
+                    'current source or a resistor needs a raw-device instance parameter '
+                    'override, which Cadnip does not implement — measured on 0.14.0 and '
+                    'on main, r1=(r=2e3,) and var"r1.r"=2e3 are ignored or rejected, and '
+                    'its own test suite asserts they throw. Only .dc temp is supported, '
+                    'through with_temp. Cadnip would need raw-device overrides, or '
+                    'InSpice would have to emit the swept device value as a .param.'
                 )
         return super().dc(**kwargs)
 

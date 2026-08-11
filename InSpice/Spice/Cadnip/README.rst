@@ -102,22 +102,43 @@ Analyses
 
 ``dc()`` sweep of a source or a resistor
     ``simulation.dc(Vinput=slice(0, 5, 0.1))`` cannot be expressed.  Cadnip
-    sweeps *parameters*: ``CircuitSweep``/``Sweep`` bind netlist ``.param``
-    names and deliberately reject device instance parameters ("device instance
-    parameters are not reachable this way — give the netlist a ``.param`` and
-    use that instead").  A SPICE `.dc` names a device instance, so the sweep has
-    no target.  Only ``dc(temp=slice(...))`` is supported, through ``with_temp``.
+    sweeps *parameters*, and a SPICE `.dc` names a device, so the sweep has no
+    target.  Only ``dc(temp=slice(...))`` is supported, through ``with_temp``.
 
-    *Cadnip would need*: instance-parameter overrides — the spelling its own
-    ``doc/parameter_overrides.md`` §1 keeps open as unfinished, ``v1=(dc=2.0,)``
-    / ``r1=(r=2e3,)`` — or a `.dc`-style entry point taking a device name and a
-    value range.
+    Measured on Cadnip 0.14.0 and on its ``main``, against a
+    ``V1``/``R1``/``R2`` divider — a *raw device* parameter is not reachable by
+    any spelling:
 
-    *InSpice would need*, to use what Cadnip already has: a way to ask for a
-    sweep of a netlist ``.param``.  :meth:`InSpice.Spice.Netlist.Circuit.parameter`
-    can write one and Cadnip sweeps it happily, but ``dc()`` only accepts the
-    name of a voltage source, a current source, a resistor or ``temp``, so there
-    is no way to name it.
+    .. code-block:: text
+
+        MNACircuit(deck; r1=(r=2e3,))      MethodError (builder takes no params)
+        alter(circuit; r1=(r=2e3,))        silently ignored, V(out) unchanged
+        alter(circuit; var"r1.r"=2e3)      silently ignored, V(out) unchanged
+        alter(circuit; v1=(dc=2.0,))       silently ignored, V(out) unchanged
+
+    Add any ``.param`` to the deck and the override checker has a tree to check
+    against, so the same calls become ``ArgumentError: unknown parameter
+    override `r1``` instead.  Cadnip's own test suite asserts this
+    (``test/params.jl``, "Device instance parameters are the one documented
+    gap"), and ``doc/parameter_overrides.md`` §1 sizes the work: 17
+    ``cg_mna_instance!`` methods and ~57 value sites that never consult the lens.
+
+    *Subcircuit* instance parameters are a different matter and do work —
+    ``x1=(r1val=1e3,)``, and ``var"x1.r1val"`` as a sweep axis — but InSpice's
+    `.dc` names a device, not a subcircuit.
+
+    *Cadnip would need*: raw-device instance overrides, the ``v1=(dc=2.0,)`` /
+    ``r1=(r=2e3,)`` spelling §1 keeps open (and which the CedarSim test quoted
+    there used to exercise).  Two smaller inconsistencies worth folding in: an
+    unreachable override is an ``ArgumentError`` through ``alter`` but a raw
+    ``MethodError`` through the ``MNACircuit(code; …)`` constructor, and it is
+    silently ignored altogether when the deck declares no ``.param`` at all.
+
+    *Or InSpice could* parameterize the swept device on the way out — emit
+    ``.param`` for its value and sweep that, which is what Cadnip's README
+    recommends ("give the netlist a ``.param`` and use that instead").  That is
+    a netlist rewrite this backend deliberately does not do behind the user's
+    back; it is the obvious route if the gap outlives the wait.
 
 Nested ``dc()`` sweeps
     A second sweep axis is rejected even for temperature: ``with_temp`` gives
