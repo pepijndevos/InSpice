@@ -204,12 +204,21 @@ class TestCadnipTransient(unittest.TestCase):
         self.assertEqual(name, 'transient')
         self.assertEqual(args[1:], (0., 2e-3))
         self.assertAlmostEqual(kwargs['max_time'], 1e-6)
+        self.assertFalse(kwargs['use_initial_condition'])
 
-    def test_use_initial_condition_is_not_implemented(self):
-        simulator, _ = make_simulator()
+    def test_use_initial_condition_selects_uic(self):
+        simulator, shared = make_simulator(transient={
+            'time': np.array([0., 1e-4]),
+            'nodes': ['out'],
+            'node_values': np.array([[0., 1.]]),
+            'currents': [],
+            'current_values': np.zeros((0, 2)),
+            'retcode': 'Success',
+        })
         simulation = simulator.simulation(make_circuit())
-        with self.assertRaises(NotImplementedError):
-            simulation.transient(step_time=1@u_us, end_time=1@u_ms, use_initial_condition=True)
+        simulation.transient(step_time=1@u_us, end_time=1@u_ms, use_initial_condition=True)
+        _, _, kwargs = shared.calls[1]
+        self.assertTrue(kwargs['use_initial_condition'])
 
 ####################################################################################################
 
@@ -266,9 +275,9 @@ class TestCadnipNoise(unittest.TestCase):
         # Cadnip returns V²/Hz, InSpice reports V/√Hz
         np.testing.assert_allclose(np.array(analysis['onoise_spectrum']), [2e-9, 1e-9])
         np.testing.assert_allclose(np.array(analysis['inoise_spectrum']), [4e-9, 2e-9])
-        # Unitless waveforms, as in the Ngspice backend: index through numpy
-        self.assertAlmostEqual(
-            float(np.array(analysis.internal_parameters['onoise_total'])[0]), 3e-9)
+        # Unitless waveforms, as in the Ngspice backend: index through numpy.
+        # The totals are nodes, which is where NoiseAnalysis documents them.
+        self.assertAlmostEqual(float(np.array(analysis.nodes['onoise_total'])[0]), 3e-9)
         # The contribution is keyed by the element name, with its netlist case
         np.testing.assert_allclose(
             np.array(analysis.internal_parameters['R1']), [2e-9, 1e-9])

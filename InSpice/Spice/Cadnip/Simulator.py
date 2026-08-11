@@ -63,7 +63,7 @@ from ..AnalysisParameters import (
 from ..Simulator import Simulator
 from .Shared import CadnipShared
 from .Simulation import CadnipSimulation
-from .Solution import Plot, Vector
+from .Solution import Solution, Variable
 
 ####################################################################################################
 
@@ -179,31 +179,36 @@ class CadnipSimulator(Simulator):
     # DC operating point and temperature sweep
     #
 
+    #: The four name/value pairs a DC result carries.
+    _DC_VARIABLES = (
+        ('nodes', 'node_values', Variable.VOLTAGE),
+        ('currents', 'current_values', Variable.CURRENT),
+        ('terminal_currents', 'terminal_current_values', Variable.TERMINAL_CURRENT),
+        ('op_vars', 'op_var_values', Variable.OP_VAR),
+    )
+
+    #: A transient or AC result carries the solution vector only.
+    _SOLUTION_VARIABLES = _DC_VARIABLES[:2]
+
     @staticmethod
-    def _add_dc_vectors(plot, result):
-        """Add the node, branch and device vectors of a DC result to `plot`.
+    def _add_variables(solution, result, kinds):
+        """Add the named rows of a bridge result to `solution`.
 
         The values are (nvariable, npoint) matrices: one column for an operating
-        point, one per sweep point for a sweep.
+        point, one per sweep or time point otherwise.
 
         """
-        kinds = (
-            ('nodes', 'node_values', Vector.VOLTAGE),
-            ('currents', 'current_values', Vector.CURRENT),
-            ('terminal_currents', 'terminal_current_values', Vector.TERMINAL_CURRENT),
-            ('op_vars', 'op_var_values', Vector.OP_VAR),
-        )
         for names_key, values_key, kind in kinds:
             for index, name in enumerate(result[names_key]):
-                plot.add(Vector(name, kind, result[values_key][index]))
+                solution.add(Variable(name, kind, result[values_key][index]))
 
     ##############################################
 
     def _run_operating_point(self, simulation, circuit):
         result = self._cadnip_shared.operating_point(circuit)
-        plot = Plot(simulation, 'op')
-        self._add_dc_vectors(plot, result)
-        return plot.to_analysis()
+        solution = Solution(simulation)
+        self._add_variables(solution, result, self._DC_VARIABLES)
+        return solution.to_operating_point_analysis()
 
     ##############################################
 
@@ -221,10 +226,10 @@ class CadnipSimulator(Simulator):
             )
         temperatures = self._sweep_values(start, stop, step)
         result = self._cadnip_shared.temperature_sweep(circuit, temperatures)
-        sweep = Vector('temp-sweep', Vector.TEMPERATURE, result['sweep'])
-        plot = Plot(simulation, 'dc', abscissa=sweep)
-        self._add_dc_vectors(plot, result)
-        return plot.to_analysis()
+        sweep = Variable('temp-sweep', Variable.TEMPERATURE, result['sweep'])
+        solution = Solution(simulation, abscissa=sweep)
+        self._add_variables(solution, result, self._DC_VARIABLES)
+        return solution.to_dc_analysis()
 
     ##############################################
 
@@ -269,13 +274,10 @@ class CadnipSimulator(Simulator):
             analysis_parameters.stop_frequency,
         )
         result = self._cadnip_shared.ac(circuit, frequency)
-        abscissa = Vector('frequency', Vector.FREQUENCY, result['frequency'])
-        plot = Plot(simulation, 'ac', abscissa=abscissa)
-        for index, name in enumerate(result['nodes']):
-            plot.add(Vector(name, Vector.VOLTAGE, result['node_values'][index]))
-        for index, name in enumerate(result['currents']):
-            plot.add(Vector(name, Vector.CURRENT, result['current_values'][index]))
-        return plot.to_analysis()
+        abscissa = Variable('frequency', Variable.FREQUENCY, result['frequency'])
+        solution = Solution(simulation, abscissa=abscissa)
+        self._add_variables(solution, result, self._SOLUTION_VARIABLES)
+        return solution.to_ac_analysis()
 
     ##############################################
     #
@@ -294,14 +296,12 @@ class CadnipSimulator(Simulator):
         result = self._cadnip_shared.transient(
             circuit, start_time, end_time,
             max_time=None if max_time is None else float(max_time),
+            use_initial_condition=analysis_parameters.use_initial_condition,
         )
-        abscissa = Vector('time', Vector.TIME, result['time'])
-        plot = Plot(simulation, 'tran', abscissa=abscissa)
-        for index, name in enumerate(result['nodes']):
-            plot.add(Vector(name, Vector.VOLTAGE, result['node_values'][index]))
-        for index, name in enumerate(result['currents']):
-            plot.add(Vector(name, Vector.CURRENT, result['current_values'][index]))
-        return plot.to_analysis()
+        abscissa = Variable('time', Variable.TIME, result['time'])
+        solution = Solution(simulation, abscissa=abscissa)
+        self._add_variables(solution, result, self._SOLUTION_VARIABLES)
+        return solution.to_transient_analysis()
 
     ##############################################
     #
@@ -324,20 +324,21 @@ class CadnipSimulator(Simulator):
         )
         result = self._cadnip_shared.noise(circuit, output, source, frequency)
 
-        abscissa = Vector('frequency', Vector.FREQUENCY, result['frequency'])
-        plot = Plot(simulation, 'noise', abscissa=abscissa)
+        abscissa = Variable('frequency', Variable.FREQUENCY, result['frequency'])
+        solution = Solution(simulation, abscissa=abscissa)
         # Cadnip reports power spectral densities (V²/Hz), Ngspice and InSpice
-        # spectral densities (V/√Hz).
-        plot.add(Vector('onoise_spectrum', Vector.NOISE_DENSITY, np.sqrt(result['onoise'])))
-        plot.add(Vector('onoise_total', Vector.NOISE_TOTAL, np.array([result['onoise_total']])))
+        # spectral densities (V/√Hz). The four names are the ones NoiseAnalysis
+        # documents; Ngspice splits them over its noise1 and noise2 plots.
+        solution.add(Variable('onoise_spectrum', Variable.NOISE, np.sqrt(result['onoise'])))
+        solution.add(Variable('onoise_total', Variable.NOISE, np.array([result['onoise_total']])))
         if result['inoise'].size:
-            plot.add(Vector('inoise_spectrum', Vector.NOISE_DENSITY, np.sqrt(result['inoise'])))
-            plot.add(Vector(
-                'inoise_total', Vector.NOISE_TOTAL, np.array([result['inoise_total']])))
+            solution.add(Variable('inoise_spectrum', Variable.NOISE, np.sqrt(result['inoise'])))
+            solution.add(Variable(
+                'inoise_total', Variable.NOISE, np.array([result['inoise_total']])))
         for index, name in enumerate(result['sources']):
-            plot.add(Vector(
-                name, Vector.NOISE_SOURCE, np.sqrt(result['source_values'][index])))
-        return plot.to_analysis()
+            solution.add(Variable(
+                name, Variable.NOISE_SOURCE, np.sqrt(result['source_values'][index])))
+        return solution.to_noise_analysis()
 
     ##############################################
 

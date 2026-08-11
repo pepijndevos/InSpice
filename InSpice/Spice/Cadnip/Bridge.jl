@@ -28,8 +28,8 @@ Every function here is a thin adapter over the *public* Cadnip API — `MNACircu
 `dc!`, `tran!`, `ac!`, `noise!`, `acdec`, `with_temp` — that flattens a Cadnip
 solution object into a `Dict{String,Any}` of plain arrays.  Nothing here
 re-implements simulator behaviour: when Cadnip has no API for something (a `.dc`
-source sweep, `.ic`, sensitivity, pole-zero, …) the Python side raises
-`NotImplementedError` instead of this file emulating it.
+source sweep, per-node `.ic` values, sensitivity, pole-zero, …) the Python side
+raises `NotImplementedError` instead of this file emulating it.
 
 Two conventions the Python side relies on:
 
@@ -42,9 +42,12 @@ Two conventions the Python side relies on:
   a solution key, so the fields are the only route.
 
 World age: `MNACircuit(code; lang=:spice)` `Base.eval`s a freshly generated
-builder, so the analysis functions call into it through `Base.invokelatest`.
-That makes them safe to call from any world — including the same Python
-statement that built the circuit.
+builder, which a Julia *function* that both built and solved would not be
+allowed to call — its world is frozen at entry.  No `invokelatest` is needed
+here: InSpice builds the circuit in one call from Python and analyses it in the
+next, and each of those enters Julia in the current world, which postdates the
+builder.  Cadnip's own guidance is to keep the builder call in the current world
+rather than pay the `invokelatest` overhead.
 """
 module InSpiceCadnip
 
@@ -166,7 +169,7 @@ operating-point variables (`gm`, `vdsat`, …) Cadnip reports at the converged
 point; InSpice exposes both as `analysis.internal_parameters`.
 """
 function operating_point(circuit)
-    sol = Base.invokelatest(Cadnip.dc!, circuit)
+    sol = Cadnip.dc!(circuit)
     return _dc_dict([sol])
 end
 
@@ -186,7 +189,7 @@ function temperature_sweep(circuit, temperatures)
     solutions = Any[]
     u0 = nothing
     for temperature in temps
-        sol = Base.invokelatest(Cadnip.dc!, MNA.with_temp(circuit, temperature); u0=u0)
+        sol = Cadnip.dc!(MNA.with_temp(circuit, temperature); u0=u0)
         push!(solutions, sol)
         sol.converged && (u0 = sol.x)
     end
@@ -201,15 +204,24 @@ end
 #
 
 """
-    transient(circuit, tstart, tstop; max_step=nothing) -> Dict
+    transient(circuit, tstart, tstop; max_step=nothing, use_initial_condition=false) -> Dict
 
 `Cadnip.tran!` over `(tstart, tstop)`, returning the integrator's own time grid
 — no resampling.  `max_step` maps to the SciML `dtmax` option (SPICE `tmax`).
+
+`use_initial_condition` is SPICE's `uic`: it selects `MNA.CedarUICOp`, which
+skips the DC bias solve and relaxes the algebraic constraints with a few fixed
+implicit-Euler steps instead.  The default, `MNA.CedarTranOp`, is the SPICE
+behaviour without `uic` — sources evaluated at `t = 0` and a DC steady state
+solved there.
 """
-function transient(circuit, tstart::Real, tstop::Real; max_step=nothing)
+function transient(circuit, tstart::Real, tstop::Real;
+                   max_step=nothing, use_initial_condition::Bool=false)
     options = max_step === nothing ? NamedTuple() : (dtmax=Float64(max_step),)
-    sol = Base.invokelatest(Cadnip.tran!, circuit,
-                            (Float64(tstart), Float64(tstop)); options...)
+    if use_initial_condition
+        options = merge(options, (initializealg=MNA.CedarUICOp(),))
+    end
+    sol = Cadnip.tran!(circuit, (Float64(tstart), Float64(tstop)); options...)
     system = sol.prob.f.sys
     time = collect(Float64, sol.t)
     npoints = length(time)
@@ -236,7 +248,7 @@ and branch current, linearized about the DC operating point.
 """
 function ac(circuit, frequencies)
     freqs = collect(Float64, frequencies)
-    sol = Base.invokelatest(Cadnip.ac!, circuit, freqs)
+    sol = Cadnip.ac!(circuit, freqs)
     npoints = length(freqs)
     return Dict{String,Any}(
         "frequency" => freqs,
@@ -266,8 +278,7 @@ ngspice reports.
 function noise(circuit, output::AbstractString, input, frequencies)
     freqs = collect(Float64, frequencies)
     source = input === nothing ? nothing : Symbol(String(input))
-    sol = Base.invokelatest(Cadnip.noise!, circuit, Symbol(String(output));
-                            freqs=freqs, input=source)
+    sol = Cadnip.noise!(circuit, Symbol(String(output)); freqs=freqs, input=source)
     contributors = sort(collect(keys(sol.contributions)))
     contributions = Matrix{Float64}(undef, length(contributors), length(freqs))
     for (i, name) in enumerate(contributors)

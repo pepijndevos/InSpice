@@ -17,7 +17,8 @@ Installation
     python -c "import juliapkg; juliapkg.add('Cadnip', '28ce5535-9df1-4533-abc1-da0fb7327efb'); juliapkg.resolve()"
 
 juliacall installs a private Julia if none is found, so no manual Julia setup is
-needed.  Cadnip requires Julia 1.11 or later.
+needed.  Cadnip asks for Julia 1.11 or later and recommends 1.12; juliacall
+accepts 1.10.3 or later, so the version juliapkg picks is fine either way.
 
 Usage
 =====
@@ -29,14 +30,14 @@ Usage
     from InSpice.Unit import *
 
     circuit = Circuit('Divider')
-    circuit.V('input', 'in', circuit.gnd, 10@u_V)
-    circuit.R(1, 'in', 'out', 1@u_kOhm)
+    circuit.V('input', 'inp', circuit.gnd, 10@u_V)
+    circuit.R(1, 'inp', 'out', 1@u_kOhm)
     circuit.R(2, 'out', circuit.gnd, 1@u_kOhm)
 
     simulator = Simulator.factory(simulator='cadnip')
     simulation = simulator.simulation(circuit)
     analysis = simulation.operating_point()
-    print(float(analysis['out']))
+    print(float(analysis['out'][0]))
 
 How it works
 ============
@@ -53,7 +54,8 @@ InSpice                         Cadnip
 ``operating_point()``           ``dc!(circuit)``
 ``dc(temp=slice(...))``         ``dc!(with_temp(circuit, T))``, warm-started
 ``ac(...)``                     ``ac!(circuit, freqs)``
-``transient(...)``              ``tran!(circuit, (tstart, tstop))``
+``transient(...)``              ``tran!(circuit, (tstart, tstop))``, `uic` via
+                                ``CedarUICOp``
 ``noise(...)``                  ``noise!(circuit, out; freqs, input)``
 =============================== ================================================
 
@@ -61,13 +63,32 @@ Temperature is passed through ``MNASpec`` rather than as a `.options temp` card,
 because that is the channel the MNA device models read (``_mna_spec_.temp``); a
 `.options temp` card feeds Cadnip's Spectre-side option channel instead.
 
-Result naming follows the Ngspice backend: node voltages keep their net name,
-branch currents drop Cadnip's ``I_`` prefix (``I_vinput`` →
-``analysis.branches['Vinput']``), and the device terminal currents (``i_r1_p``)
-and device operating-point variables (``m1_gm``) Cadnip reports at a DC
-operating point land in ``analysis.internal_parameters``.  Cadnip lower-cases
-every identifier of a deck, so names are mapped back to the case of the
-:class:`InSpice.Spice.Netlist.Circuit`.
+Result naming
+-------------
+
+The names are the ones InSpice's analysis objects define, not Ngspice's — every
+backend meets the same contract in its own way, and this one is closest to
+:file:`InSpice/Spice/Xyce/RawFile.py`:
+
+* node voltages keep their net name, branch currents are keyed by their element,
+  so Cadnip's ``I_`` prefix is dropped exactly as Ngspice's ``#branch`` suffix
+  and Xyce's ``V(...)`` wrapper are — ``analysis.branches['Vinput']``;
+* Cadnip lower-cases every identifier of a deck, so names are mapped back to the
+  case of the :class:`InSpice.Spice.Netlist.Circuit`, the ``fix_case`` step Xyce
+  needs as well (upper case there, lower case here);
+* the noise waveforms are the four
+  :class:`InSpice.Probe.WaveForm.NoiseAnalysis` documents —
+  ``onoise_spectrum``, ``inoise_spectrum``, ``onoise_total``, ``inoise_total``,
+  in ``nodes``, which is what :file:`examples/analyses/analyses.py` reads;
+* device terminal currents (``i_r1_p``) and device operating-point variables
+  (``m1_gm``) have no counterpart in the other simulators, so they keep their
+  Cadnip names in ``analysis.internal_parameters``.
+
+:class:`InSpice.Spice.Cadnip.Solution.Variable` subclasses the shared
+:class:`InSpice.Spice.RawFile.VariableAbc` for this, as the Xyce and VACASK
+variables do.  It does not reuse ``RawFileAbc``: that class is a raw-file
+*parser*, and Cadnip returns arrays.  Nor does it carry a plot-name dispatch —
+Cadnip has no plots, and the simulator knows which analysis it ran.
 
 Missing functionality
 =====================
@@ -87,9 +108,16 @@ Analyses
     use that instead").  A SPICE `.dc` names a device instance, so the sweep has
     no target.  Only ``dc(temp=slice(...))`` is supported, through ``with_temp``.
 
-    *Cadnip would need*: instance-parameter overrides (``v1=(dc=2.0,)``,
-    ``r1=(r=2e3,)``), or a `.dc`-style sweep entry point taking a device name
-    and a value range.
+    *Cadnip would need*: instance-parameter overrides — the spelling its own
+    ``doc/parameter_overrides.md`` §1 keeps open as unfinished, ``v1=(dc=2.0,)``
+    / ``r1=(r=2e3,)`` — or a `.dc`-style entry point taking a device name and a
+    value range.
+
+    *InSpice would need*, to use what Cadnip already has: a way to ask for a
+    sweep of a netlist ``.param``.  :meth:`InSpice.Spice.Netlist.Circuit.parameter`
+    can write one and Cadnip sweeps it happily, but ``dc()`` only accepts the
+    name of a voltage source, a current source, a resistor or ``temp``, so there
+    is no way to name it.
 
 Nested ``dc()`` sweeps
     A second sweep axis is rejected even for temperature: ``with_temp`` gives
@@ -134,15 +162,18 @@ Several analyses in one run
 Directives
 ----------
 
-``initial_condition()`` (`.ic`) and ``transient(use_initial_condition=True)``
-    Cadnip's reader ignores `.ic`, and ``tran!`` always initialises through
-    ``CedarTranOp``: transient sources are evaluated at ``t = 0`` and a DC
-    steady state is solved there.  There is no way to force node voltages
-    instead.
+``initial_condition()`` (`.ic`)
+    ``transient(use_initial_condition=True)`` *is* supported — it selects
+    Cadnip's ``CedarUICOp`` initialisation, which skips the DC bias solve and
+    relaxes the algebraic constraints with a few fixed implicit-Euler steps,
+    SPICE's `uic` without `.ic` values.  What has no equivalent is the `.ic`
+    values themselves: Cadnip's reader ignores the card, and neither ``tran!``
+    nor ``CedarUICOp`` takes a starting value per node — UIC relaxes from the
+    problem's zero state.
 
-    *Cadnip would need*: an initial-condition argument on ``tran!`` (both SPICE
-    readings: forcing nodes during the bias solution, and skipping the bias
-    solution entirely).
+    *Cadnip would need*: a named-node initial state on ``tran!``, for both SPICE
+    readings of `.ic` (forcing nodes during the bias solution, and seeding the
+    UIC relaxation).
 
 ``node_set()`` (`.nodeset`)
     ``dc!(circuit; u0=x)`` warm-starts Newton from a *full* solution vector, not
@@ -180,10 +211,11 @@ Analysis details
 
 Transient output interval
     SPICE's ``tstep`` is not honoured as an output interval: ``tran!`` is
-    adaptive and its own time points are returned unresampled.  ``max_time``
-    maps to the SciML ``dtmax``.  The solution is dense, so a fixed grid could
-    be interpolated, but Cadnip has no output-interval option and this backend
-    does not resample behind the user's back.
+    adaptive and its own time points are returned unresampled, which is what
+    Ngspice does too.  ``max_time`` maps to the SciML ``dtmax``.  Cadnip has no
+    output-interval option of its own; ``tran!`` forwards keyword arguments to
+    SciML's ``solve``, so a fixed grid is a ``saveat=`` away for anyone driving
+    Cadnip directly, but this backend does not resample behind the user's back.
 
 ``.ac oct`` and ``.ac lin`` grids
     Cadnip provides ``acdec`` (points per decade) and it is used verbatim for
@@ -207,6 +239,13 @@ Noise output and input
 
     *Cadnip would need*: a node-pair output and a current-source input.
 
+Subcircuit node names
+    Cadnip flattens a hierarchical node into the name table with an underscore
+    (``x1_out``), where Ngspice and Xyce write ``x1.out``.  The backend does not
+    try to reverse it: an underscore is a legal character in a net name, so
+    guessing where the hierarchy separator was would rename ordinary nodes.  A
+    script reading a subcircuit node has to spell it the Cadnip way.
+
 Solution introspection
     Nothing in the public API classifies a solution name as a node voltage or a
     branch current — ``keys(sol)`` returns them mixed, and only the naming
@@ -224,9 +263,22 @@ Implementation notes
   :class:`InSpice.Spice.Cadnip.Shared.CadnipShared` is a process-wide singleton.
   Circuits are independent objects, so unlike the Ngspice shared library there
   is no global simulator state to reset between runs.
-* ``MNACircuit(code; lang=:spice)`` ``Base.eval``\ s a freshly generated builder,
-  which Julia's world-age rule keeps invisible to the statement that created it.
-  :file:`Bridge.jl` therefore calls the analyses through ``Base.invokelatest``.
+* Julia version: nothing here pins one.  juliacall accepts any 1.10.3 or later
+  and Cadnip asks for 1.11+; the test environment used to develop this backend
+  was 1.11.7, the version Cadnip's own CI and ``Manifest.toml`` are locked to,
+  and the suite was re-run on 1.12.1, which Cadnip recommends for compilation
+  speed.
+* World age: ``MNACircuit(code; lang=:spice)`` ``Base.eval``\ s a freshly
+  generated builder, which a Julia *function* that both built and solved could
+  not then call — its world is frozen at entry.  :file:`Bridge.jl` needs no
+  ``invokelatest`` for that, because InSpice builds the circuit in one call from
+  Python and analyses it in the next, and each of those enters Julia in the
+  current world.  Measured both ways on 1.11 and 1.12.
 * Relative `.include` and `.lib` paths in an inline deck are resolved against
   the ``source_dir`` passed to the simulator (``Simulator.factory(...,
   source_dir=...)``); without one, relative paths fail.
+* Checked against Cadnip's ``main`` as well as the released 0.14.0: the
+  unreleased commits are codegen hygiene, the deck-as-a-namespace change that
+  lets ``sp"..."`` expand inside a function body, and release automation.  None
+  of them touch an analysis, and the integration suite behaves identically on
+  both.

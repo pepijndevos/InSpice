@@ -107,10 +107,12 @@ class CadnipSimulation(Simulation):
 
     def initial_condition(self, **kwargs):
         raise NotImplementedError(
-            'Initial conditions (.ic) are not supported by Cadnip: its netlist reader '
-            'ignores the card and its transient initialisation always solves a DC '
-            'operating point at t=0. Cadnip would need an initial-condition argument '
-            'on tran!/CedarTranOp.'
+            'Per-node initial conditions (.ic) are not supported by Cadnip: its netlist '
+            'reader ignores the card, and neither tran! nor its CedarUICOp '
+            'initialisation takes a starting value per node — UIC relaxes from the '
+            "problem's zero state. transient(use_initial_condition=True) is supported "
+            'and matches SPICE uic without .ic values. Cadnip would need a named-node '
+            'initial state on tran!.'
         )
 
     def node_set(self, **kwargs):
@@ -194,22 +196,3 @@ class CadnipSimulation(Simulation):
                 )
         return super().dc(**kwargs)
 
-    ##############################################
-
-    def transient(self, *args, **kwargs):
-        """Transient analysis.
-
-        ``use_initial_condition`` (SPICE `uic`) is not supported: Cadnip always
-        initialises a transient from a DC operating point evaluated at ``t=0``
-        (``CedarTranOp``) and offers no way to skip it.
-
-        """
-        # signature: step_time, end_time, start_time, max_time, use_initial_condition
-        positional_uic = len(args) >= 5 and bool(args[4])
-        if positional_uic or kwargs.get('use_initial_condition', False):
-            raise NotImplementedError(
-                'use_initial_condition (uic) is not supported by Cadnip: tran! always '
-                'solves the DC steady state at t=0 through CedarTranOp. Cadnip would '
-                'need an initialisation option that takes the .ic values instead.'
-            )
-        return super().transient(*args, **kwargs)

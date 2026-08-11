@@ -311,11 +311,18 @@ class CadnipShared:
 
     ##############################################
 
-    def transient(self, circuit, start_time, end_time, max_time=None):
-        """Run ``tran!`` over ``(start_time, end_time)``."""
+    def transient(self, circuit, start_time, end_time, max_time=None,
+                  use_initial_condition=False):
+        """Run ``tran!`` over ``(start_time, end_time)``.
+
+        ``use_initial_condition`` is SPICE's `uic`: it selects Cadnip's
+        ``CedarUICOp`` initialisation, which skips the DC bias solve.
+
+        """
         result = self._call(
             'transient', circuit, float(start_time), float(end_time),
             max_step=None if max_time is None else float(max_time),
+            use_initial_condition=bool(use_initial_condition),
         )
         retcode = str(result['retcode'])
         if retcode not in self.SUCCESSFUL_RETCODES:

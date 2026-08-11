@@ -83,6 +83,27 @@ def test_transient():
 
 ####################################################################################################
 
+def test_transient_use_initial_condition():
+    """SPICE uic: no DC bias solve, so the capacitor starts discharged."""
+    circuit = Circuit('RC Step')
+    circuit.V('cc', 'vcc', circuit.gnd, 5@u_V)
+    circuit.R(1, 'vcc', 'out', 1@u_kOhm)
+    circuit.C(1, 'out', circuit.gnd, 1@u_uF)
+
+    simulation = make_simulator().simulation(circuit)
+    biased = simulation.transient(step_time=100@u_us, end_time=5@u_ms)
+    assert float(np.array(biased['out'])[0]) == pytest.approx(5., abs=1e-6)
+
+    simulation = make_simulator().simulation(circuit)
+    relaxed = simulation.transient(
+        step_time=100@u_us, end_time=5@u_ms, use_initial_condition=True)
+    out = np.array(relaxed['out'])
+    assert out[0] == pytest.approx(0., abs=1e-3)
+    # One RC is 1 ms, so after 5 ms the capacitor is charged
+    assert out[-1] == pytest.approx(5., rel=0.02)
+
+####################################################################################################
+
 def test_ac():
     simulation = make_simulator().simulation(low_pass())
     analysis = simulation.ac(
@@ -125,7 +146,7 @@ def test_noise():
     # The R1 contribution is the only noise source of the circuit
     np.testing.assert_allclose(np.array(analysis.internal_parameters['R1']), onoise, rtol=1e-9)
     # Band-integrated output noise is the kT/C of the load capacitor
-    total = float(np.array(analysis.internal_parameters['onoise_total'])[0])
+    total = float(np.array(analysis.nodes['onoise_total'])[0])
     k_boltzmann = 1.380649e-23
     assert total == pytest.approx(np.sqrt(k_boltzmann * (27 + 273.15) / 1e-6), rel=0.05)
 
