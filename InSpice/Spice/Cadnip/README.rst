@@ -265,15 +265,17 @@ Implementation notes
   is no global simulator state to reset between runs.
 * Julia version: nothing here pins one.  juliacall accepts any 1.10.3 or later
   and Cadnip asks for 1.11+; the test environment used to develop this backend
-  was 1.11.7, the version Cadnip's own CI and ``Manifest.toml`` are locked to,
-  and the suite was re-run on 1.12.1, which Cadnip recommends for compilation
-  speed.
+  was 1.11.7, the version Cadnip's own CI and ``Manifest.toml`` are locked to;
+  the suite passes identically on 1.12.1, which Cadnip recommends for
+  compilation speed.
 * World age: ``MNACircuit(code; lang=:spice)`` ``Base.eval``\ s a freshly
   generated builder, which a Julia *function* that both built and solved could
   not then call — its world is frozen at entry.  :file:`Bridge.jl` needs no
   ``invokelatest`` for that, because InSpice builds the circuit in one call from
   Python and analyses it in the next, and each of those enters Julia in the
-  current world.  Measured both ways on 1.11 and 1.12.
+  current world.  Measured on 1.11 with and without the wrapper — the hazard is
+  real inside a Julia function that does both, and absent here — and the suite
+  confirmed on 1.12.
 * Relative `.include` and `.lib` paths in an inline deck are resolved against
   the ``source_dir`` passed to the simulator (``Simulator.factory(...,
   source_dir=...)``); without one, relative paths fail.
