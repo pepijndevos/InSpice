@@ -38,12 +38,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "twine", "build", "flake8", "scipy", "pint", "KiCadRW", "sexpdata"]
 vacask = ["vacask-bin>=0.3.0"]
+cadnip = ["juliacall"]
 
 [project.scripts]
 inspice-post-installation = "InSpice.Scripts.InSpice_post_installation:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.package-data]
+"InSpice.Spice.Cadnip" = ["*.jl", "*.rst"]
 
 [tool.setuptools.packages.find]
 include = ["InSpice*"]
