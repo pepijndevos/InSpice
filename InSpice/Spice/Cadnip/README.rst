@@ -117,6 +117,10 @@ Nothing below is emulated: the backend raises :exc:`NotImplementedError` with
 the reason, so that a script fails loudly instead of silently getting a
 different simulation.  Each entry states what Cadnip would need.
 
+:file:`FINDINGS.rst` collects the same ground from the other side — what was
+measured in Cadnip while building this backend, including the defects behind
+several of these entries, with the reproductions.
+
 Analyses
 --------
 
