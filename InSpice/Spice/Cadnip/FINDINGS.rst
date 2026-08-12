@@ -3,7 +3,9 @@
 ==========================================================
 
 Notes taken while writing :file:`InSpice/Spice/Cadnip/`, kept because most of
-them are about Cadnip rather than about InSpice and are worth filing upstream.
+them are about Cadnip rather than about InSpice and are worth filing upstream:
+behaviour that surprised the backend, one unreachable code path, and the feature
+gaps the backend has to raise :exc:`NotImplementedError` for.
 
 Every claim here was measured, not read off the source or the docs — twice the
 documentation and once my own reading turned out to disagree with what the code
@@ -162,6 +164,100 @@ Worth correcting, because the stricter claim leads callers to reach for
 ``invokelatest`` where they do not need it.  A driver that builds in one call
 and solves in the next — which is what a foreign-language binding does — never
 needs it at all.
+
+Dead code
+=========
+
+6. The pre-MNA codegen path is unreachable
+------------------------------------------
+
+Traced on ``main`` @ 739fdac while working out where `.options temp` goes.  The
+chain, leaf first::
+
+    codegen!(state)                       src/spc/codegen.jl:607-723
+      <- codegen(scope)                   src/spc/codegen.jl:725-727
+        <- generate_sp_code(...)          src/spc/interface.jl:9-33
+             the @generated body for
+          <- (::SpCircuit)(nets...)       src/spc/generated.jl:1-7
+
+and an ``SpCircuit`` value is constructed in exactly two places:
+
+* ``codegen.jl:455``, inside ``cg_instance!(::SNode{SP.SubcktCall})`` — which is
+  itself reachable only from ``codegen!``, so that is the legacy path recursing
+  into itself for a subcircuit;
+* ``sema.jl:823``, inside ``sema_assign_ids``, whose only caller is its own
+  recursion at line 815.
+
+Nothing else calls ``sema_assign_ids``, so no ``CktID`` is ever assigned,
+``SemaResult.CktID`` stays ``nothing``, no ``SpCircuit`` is ever constructed, the
+generated function never fires, and ``codegen`` / ``codegen!`` never run.  Every
+live entry — ``MNACircuit(path)``, ``MNACircuit(code; lang)``,
+``Base.include(mod, SpiceFile(...))``, ``sp"..."``, ``spc"..."`` — goes through
+``_eval_deck_into_module`` → ``make_mna_circuit`` → ``codegen_mna!``, which emits
+``stamp!`` calls instead.
+
+Finding 2 corroborates it from the other side: ``codegen!``'s option block
+interpolates ``Cadnip.SimOptions`` and ``Cadnip.options``, neither of which
+exists, so a deck carrying ``.option temp/gmin/scale`` would throw
+``UndefVarError`` *at codegen time* if it ever reached ``codegen!``.  Cadnip's own
+tests compile exactly such decks without error, which is only possible because
+they never get there.
+
+What that makes unreachable, with line numbers on ``main`` @ 739fdac:
+
+====================== ========== ===============================================
+file                   lines      what
+====================== ========== ===============================================
+src/spc/codegen.jl     411-431    ``cg_params!``, ``cg_spice_instance!``
+src/spc/codegen.jl     433-523    the five ``cg_instance!`` methods
+src/spc/codegen.jl     527-605    ``cg_model_def!`` (only caller is ``codegen!``
+                                  at line 692)
+src/spc/codegen.jl     607-727    ``codegen!``, ``codegen``
+src/spc/generated.jl   1-7        the generated function and its ``reload()``
+src/spc/interface.jl   1-33       ``SpCircuit``, ``getsema``,
+                                  ``generate_sp_code``
+src/spc/sema.jl        802-826    ``assign_id!``, ``sema_assign_ids``, and with
+                                  them the ``CktID`` field and its readers
+                                  (lines 685, 810)
+src/spc/query.jl       most of it everything dispatching on ``SpCircuit``:
+                                  ``show``, ``getproperty``, ``SpRef``,
+                                  ``MultipleKinds``
+====================== ========== ===============================================
+
+That is roughly 410 of ``codegen.jl``'s 3751 lines, plus two small files.
+
+Three things not to sweep up with it
+------------------------------------
+
+**``is_ambiguous``** lives in :file:`src/spc/query.jl` (line 109) but is
+load-bearing for the *MNA* path: ``cg_net_name!`` and ``cg_model_name!`` call it
+at ``codegen.jl:27`` and ``:37``.  It has to move before the file goes.
+
+**``spicecall``** is shared — ``cg_mna_instance!`` uses it for diodes, MOSFETs
+and BJTs.  Only ``Named`` is legacy-only, and its remaining uses are inside
+``#= =#`` blocks in :file:`test/basic.jl`.
+
+**``UnimplementedDevice``** reads as Cedar-era but is live: ``sema.jl:332``
+returns a ``GlobalRef`` to it as the fallback when no model resolves.
+
+Not traced, so not claimed either way: the rest of the Cedar-era surface —
+``ParamSim`` and the netlist-text ``alter(io, ast, ::ParamSim)`` in
+:file:`src/spectre.jl`, the ``CircuitElement`` / ``AbstractSim`` abstract types,
+and ``SimSpec``.  ``SimSpec`` and the ``Cadnip.spec`` ScopedValue in particular
+are *not* dead: ``temper()`` and ``var"$time"`` in :file:`src/spectre_env.jl`
+read them, and MNA-generated expressions can reach those.  Nothing writes them,
+which is finding 3.
+
+Verifying
+---------
+
+The whole trace is four greps::
+
+    grep -rn '\bcodegen!\?(' --include=*.jl .      # 2 hits: 725, interface.jl:33
+    grep -rn 'sema_assign_ids' --include=*.jl .    # 2 hits: its definition and
+                                                   #         its own recursion
+    grep -rn 'SpCircuit{' --include=*.jl src/      # constructed at 455 and 823
+    grep -rn 'is_ambiguous' --include=*.jl src/    # query.jl:109, codegen.jl:27,37
 
 Gaps
 ====
