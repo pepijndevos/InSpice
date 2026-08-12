@@ -196,12 +196,24 @@ live entry — ``MNACircuit(path)``, ``MNACircuit(code; lang)``,
 ``_eval_deck_into_module`` → ``make_mna_circuit`` → ``codegen_mna!``, which emits
 ``stamp!`` calls instead.
 
-Finding 2 corroborates it from the other side: ``codegen!``'s option block
-interpolates ``Cadnip.SimOptions`` and ``Cadnip.options``, neither of which
-exists, so a deck carrying ``.option temp/gmin/scale`` would throw
-``UndefVarError`` *at codegen time* if it ever reached ``codegen!``.  Cadnip's own
-tests compile exactly such decks without error, which is only possible because
-they never get there.
+Two undefined names corroborate it from the other side.  Measured::
+
+    julia> using Cadnip
+    julia> [s => isdefined(Cadnip, s) for s in
+            (:Named, :SimOptions, :options, :spicecall, :BinnedModel)]
+    :Named       => false
+    :SimOptions  => false
+    :options     => false
+    :spicecall   => true
+    :BinnedModel => true
+
+``cg_spice_instance!`` (``codegen.jl:426-431``) interpolates ``Named`` into every
+device it emits, and ``codegen!``'s option block interpolates
+``Cadnip.SimOptions`` / ``Cadnip.options``.  Both are interpolations of a *value*
+at codegen time, so the first deck with a resistor — or with
+`.option temp/gmin/scale` — would throw ``UndefVarError`` while its builder was
+being generated.  Cadnip's own tests compile exactly such decks without error,
+which is only possible because they never reach that code.
 
 What that makes unreachable, with line numbers on ``main`` @ 739fdac:
 
