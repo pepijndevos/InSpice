@@ -152,6 +152,34 @@ def test_noise():
 
 ####################################################################################################
 
+def test_temperature_reaches_the_simulation():
+    """The requested temperature must actually take effect.
+
+    Resistor Johnson noise is 4kTG, so the output PSD is proportional to the
+    absolute temperature — the one temperature-dependent quantity a circuit of
+    builtin devices exposes.  This pins the MNASpec route end to end: InSpice
+    writes no `.options temp` card, and a card would not reach the spec noise!
+    reads anyway.
+
+    """
+    def total(temperature):
+        circuit = Circuit('Noise')
+        circuit.V('input', 'inp', circuit.gnd, 0@u_V)
+        circuit.R(1, 'inp', 'out', 1@u_kOhm)
+        circuit.C(1, 'out', circuit.gnd, 1@u_uF)
+        simulation = make_simulator().simulation(circuit, temperature=temperature)
+        analysis = simulation.noise(
+            output_node='out', ref_node=circuit.gnd, src='Vinput',
+            variation='dec', points=4, start_frequency=1@u_Hz, stop_frequency=1@u_kHz,
+        )
+        # nodes carry the density; square it back to a PSD
+        return np.array(analysis['onoise_spectrum'])**2
+
+    cold, hot = total(27), total(100)
+    np.testing.assert_allclose(hot / cold, (100 + 273.15) / (27 + 273.15), rtol=1e-6)
+
+####################################################################################################
+
 def test_unsupported_dc_sweep_raises():
     simulation = make_simulator().simulation(divider())
     with pytest.raises(NotImplementedError):

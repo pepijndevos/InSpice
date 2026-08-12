@@ -144,6 +144,23 @@ class TestCadnipNetlist(unittest.TestCase):
         self.assertEqual(kwargs['temperature'], 85.)
         self.assertEqual(kwargs['nominal_temperature'], 30.)
 
+    def test_temperature_card_in_the_deck_warns(self):
+        # A card reaches Cadnip and outranks the MNASpec, so it must not pass
+        # unnoticed — it would flatten a dc(temp=...) sweep.
+        simulator, _ = make_simulator(operating_point=dc_result(['out'], [5.]))
+        circuit = make_circuit()
+        circuit.raw_spice += '.temp 100'
+        simulation = simulator.simulation(circuit)
+        with self.assertLogs('InSpice.Spice.Cadnip.Simulation', level='WARNING') as logs:
+            simulation.operating_point()
+        self.assertTrue(any('.temp' in message for message in logs.output))
+
+    def test_no_temperature_card_no_warning(self):
+        simulator, _ = make_simulator(operating_point=dc_result(['out'], [5.]))
+        simulation = simulator.simulation(make_circuit())
+        with self.assertNoLogs('InSpice.Spice.Cadnip.Simulation', level='WARNING'):
+            simulation.operating_point()
+
 ####################################################################################################
 
 class TestCadnipOperatingPoint(unittest.TestCase):

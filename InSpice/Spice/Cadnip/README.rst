@@ -59,9 +59,29 @@ InSpice                         Cadnip
 ``noise(...)``                  ``noise!(circuit, out; freqs, input)``
 =============================== ================================================
 
-Temperature is passed through ``MNASpec`` rather than as a `.options temp` card,
-because that is the channel the MNA device models read (``_mna_spec_.temp``); a
-`.options temp` card feeds Cadnip's Spectre-side option channel instead.
+Temperature
+-----------
+
+It is passed through ``MNASpec`` — ``Simulator.factory`` ... ``simulation(...,
+temperature=85)`` — and the deck carries no `.options temp` card, even though
+Cadnip does read one.  Measured on 0.14.0, a `.options temp=100` or `.temp 100`
+card compiles to ``spec = MNASpec(temp=100.0, mode=spec.mode)`` at the top of
+the generated builder, so it:
+
+* **overrides** the ``MNASpec`` the caller passed, rather than defaulting from
+  it — the legacy Spectre-side codegen guards this with ``isdefault``, the MNA
+  one does not.  InSpice writes `.options TEMP = 27` into every Ngspice deck, so
+  emitting it here would pin every simulation at 27 °C and silently flatten the
+  ``dc(temp=...)`` sweep;
+* drops every other ``MNASpec`` field — ``tnom``, ``gmin``, the tolerances —
+  back to its default, since the rebinding carries only ``temp`` and ``mode``;
+* does not reach ``circuit.spec``, which is where ``noise!`` reads temperature
+  (``src/noise.jl``: ``temp_c = circuit.spec.temp``).  Measured: with a card the
+  resistor noise stays at 27 °C while the devices move; through ``MNASpec`` both
+  move together, and the PSD ratio is exactly 373.15/300.15.
+
+``temper()`` in a `.param` expression sees neither route — Cadnip's own
+``test/basic.jl`` marks that ``@test_broken``.
 
 Result naming
 -------------
@@ -216,8 +236,15 @@ Directives
     the integrator tolerances are ``tran!`` keyword arguments and the Newton
     tolerances are internal.
 
+    Passing them as cards would not help: of the options its sema collects,
+    Cadnip's MNA codegen consumes only ``temp`` — ``gmin`` and ``scale`` are read
+    solely by the legacy Spectre-side ``codegen!``, which the MNA path never
+    calls (and whose ``Cadnip.SimOptions`` / ``Cadnip.options`` are not defined
+    in the package at all, so that branch could not run if it were reached).
+
     *Cadnip would need*: convergence and tolerance options threaded from the
-    circuit spec into ``solve_dc`` and ``tran!``.
+    circuit spec into ``solve_dc`` and ``tran!``, and ``gmin``/``scale`` cards
+    honoured on the MNA path.
 
 ``save_currents`` (`.options SAVECURRENTS`)
     Device terminal currents are gathered on the rebuild ``dc!`` performs at the

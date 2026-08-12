@@ -69,10 +69,13 @@ cadnip_version() = string(pkgversion(Cadnip))
 
 Compile a SPICE deck (as a string, title line included) into an `MNACircuit`.
 
-`temperature` and `nominal_temperature` are threaded through `MNASpec`, which is
-what the MNA device models read (`_mna_spec_.temp`); a `.options temp` card in
-the deck feeds Cadnip's *other*, Spectre-side option channel instead, so InSpice
-deliberately passes temperature here rather than in the netlist.
+`temperature` and `nominal_temperature` are threaded through `MNASpec`, and the
+deck carries no `.options temp` card.  Cadnip does read such a card — it
+compiles to `spec = MNASpec(temp=…, mode=spec.mode)` at the top of the builder —
+but that *overrides* the spec passed in, resets `tnom`/`gmin` to their defaults,
+and never reaches `circuit.spec`, which is where `noise!` reads temperature.
+One `MNASpec` keeps devices, noise and the `dc(temp=…)` sweep on the same
+temperature.
 """
 function build(netlist::AbstractString;
                temperature::Real=27.0,

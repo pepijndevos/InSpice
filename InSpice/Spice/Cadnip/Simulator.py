@@ -147,11 +147,12 @@ class CadnipSimulator(Simulator):
     ##############################################
 
     def _build_circuit(self, simulation):
-        simulation.warn_unsupported()
+        netlist = str(simulation)
+        simulation.warn_unsupported(netlist)
         options = {key.upper(): value for key, value in simulation._options.items()}
         gmin = options.get('GMIN', None)
         self._circuit = self._cadnip_shared.build_circuit(
-            str(simulation),
+            netlist,
             temperature=self._to_float(options.get('TEMP', 27.)),
             nominal_temperature=self._to_float(options.get('TNOM', 27.)),
             gmin=1e-12 if gmin is None else self._to_float(gmin),

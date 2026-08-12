@@ -43,6 +43,7 @@ __all__ = ['CadnipSimulation']
 ####################################################################################################
 
 import logging
+import re
 
 ####################################################################################################
 
@@ -64,6 +65,12 @@ class CadnipSimulation(Simulation):
     #: simulator instead of being written to the deck.
     SUPPORTED_OPTIONS = ('TEMP', 'TNOM', 'GMIN')
 
+    #: A temperature card anywhere in the deck — through ``raw_spice`` or an
+    #: `.include` — rebinds the builder's spec and so outranks the temperature
+    #: the simulation asked for.
+    _TEMPERATURE_CARD = re.compile(
+        r'^\s*(\.temp\b|\.options?\b.*\btemp\s*=)', re.IGNORECASE | re.MULTILINE)
+
     ##############################################
 
     def to_spice(self):
@@ -78,9 +85,12 @@ class CadnipSimulation(Simulation):
 
     ##############################################
 
-    def warn_unsupported(self):
+    def warn_unsupported(self, netlist=None):
         """Report what the deck asks for and Cadnip cannot do, but which does not
         change the result: it is not silently lost.
+
+        `netlist` is the rendered deck, so the caller does not pay for a second
+        render; it is rendered here when omitted.
 
         """
         unsupported = [key for key in self._options if key.upper() not in self.SUPPORTED_OPTIONS]
@@ -93,6 +103,16 @@ class CadnipSimulation(Simulation):
                 'Cadnip has no .save directive: every node voltage and branch '
                 'current of the circuit is returned, not only '
                 + ', '.join(sorted(self._saved_nodes))
+            )
+        if netlist is None:
+            netlist = self.to_spice()
+        if self._TEMPERATURE_CARD.search(netlist):
+            self._logger.warning(
+                'The circuit carries a .temp or .options temp card. Cadnip compiles it '
+                'to a spec rebinding at the top of the builder, so it overrides the '
+                f'{self.temperature} this simulation asks for and flattens a dc(temp=...) '
+                'sweep — while noise analysis keeps reading the requested temperature. '
+                'Remove the card and pass temperature to the simulation instead.'
             )
 
     ##############################################
