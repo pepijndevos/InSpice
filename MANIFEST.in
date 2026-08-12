@@ -5,7 +5,7 @@ python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
 
 # When ready for production
 python -m twine upload dist/*include pyproject.toml
-recursive-include InSpice *.py *.h *.c *.rst *.yaml *.yml
+recursive-include InSpice *.py *.h *.c *.jl *.rst *.yaml *.yml
 recursive-include examples *.py *.cir *.rst
 recursive-exclude * __pycache__
 recursive-exclude * *.py[cod]

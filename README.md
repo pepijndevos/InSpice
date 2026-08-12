@@ -29,6 +29,23 @@ pip install -e .
 - matplotlib (for plotting)
 - numpy (for numerical computation)
 
+## Simulators
+
+InSpice can drive several simulators, selected with
+`Simulator.factory(simulator=...)`:
+
+| Simulator | Name | Extra |
+| --- | --- | --- |
+| Ngspice (shared library, default) | `ngspice`, `ngspice-shared` | |
+| Ngspice (subprocess) | `ngspice-subprocess` | |
+| Xyce | `xyce`, `xyce-serial`, `xyce-parallel` | |
+| VACASK | `vacask` | `pip install "InSpice[vacask]"` |
+| [Cadnip.jl](https://github.com/NyanCAD/Cadnip.jl) | `cadnip` | `pip install "InSpice[cadnip]"` |
+
+The Cadnip backend runs the simulator in an embedded Julia runtime; see
+`InSpice/Spice/Cadnip/README.rst` for its installation, the analysis mapping and
+what Cadnip does not implement.
+
 ## Usage
 
 See the `examples` directory for various examples of using InSpice.
